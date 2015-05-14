@@ -78,18 +78,18 @@ if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_i
         done
     fi
     
+    etcd_initial_cluster=$(curl -s -f "$etcd_good_member_url/v2/members" | jq --raw-output '.[] | map(.name + "=" + .peerURLs[0]) | .[]' | xargs | sed 's/  */,/g')$(echo ",$ec2_instance_id=$ec2_instance_ip")
+    echo "etcd_initial_cluster=$etcd_initial_cluster"
+    if [[ ! $etcd_initial_cluster ]]; then
+        echo "$pkg: docker command to get etcd peers failed"
+        exit 8
+    fi
+    
     # join an existing cluster
     echo "$pkg: adding instance ID $ec2_instance_id with IP $ec2_instance_ip"
     if ! curl -f -s -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:2380\"], \"name\": \"$ec2_instance_id\"}"; then
     	echo "$pkg: unable to add this machine to the cluster"
     	exit 7
-	fi
-    
-    etcd_initial_cluster=$(curl -s -f "$etcd_good_member_url/v2/members" | jq --raw-output '.[] | map(.name + "=" + .peerURLs[0]) | .[]' | xargs | sed 's/  */,/g')
-    echo "etcd_initial_cluster=$etcd_initial_cluster"
-    if [[ ! $etcd_initial_cluster ]]; then
-        echo "$pkg: docker command to get etcd peers failed"
-        exit 8
     fi
     
         cat > "$etcd_peers_file_path" <<EOF

@@ -86,7 +86,7 @@ if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_i
     fi
     
     # join an existing cluster
-    echo "$pkg: adding instance ID $ec2_instance_id with IP $ec2_instance_ip"
+    echo "adding instance ID $ec2_instance_id with IP $ec2_instance_ip"
     if ! curl -f -s -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:2380\"], \"name\": \"$ec2_instance_id\"}"; then
     	echo "$pkg: unable to add this machine to the cluster"
     	exit 7

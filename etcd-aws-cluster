@@ -1,0 +1,116 @@
+#! /bin/bash
+pkg="getPeers"
+version="0.3"
+etcd_peers_file_path="/etc/sysconfig/etcd-peers"
+
+ec2_instance_id=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+if [[ ! $ec2_instance_id ]]; then
+    echo "$pkg: failed to get instance id from instance metadata"
+    exit 1
+fi
+
+ec2_instance_ip=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+if [[ ! $ec2_instance_ip ]]; then
+    echo "$pkg: failed to get instance IP address"
+    exit 2
+fi
+
+asg_name=$(aws autoscaling describe-auto-scaling-groups --region us-east-1 | jq --raw-output ".[] | map(select(.Instances[].InstanceId | contains(\"$ec2_instance_id\"))) | .[].AutoScalingGroupName")
+if [[ ! $asg_name ]]; then
+    echo "$pkg: failed to get the auto scaling group name"
+    exit 3
+fi
+
+etcd_peer_urls=$(aws ec2 describe-instances --region us-east-1 --instance-ids $(aws autoscaling describe-auto-scaling-groups --region us-east-1 --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r '.Reservations[].Instances | map("http://" + .NetworkInterfaces[].PrivateIpAddress + ":2379")[]')
+if [[ ! $etcd_peer_urls ]]; then
+    echo "$pkg: unable to find members of auto scaling group"
+    exit 4
+fi
+
+echo "etcd_peer_urls=$etcd_peer_urls"
+
+etcd_existing_peer_urls=
+etcd_existing_peer_names=
+etcd_good_member_url=
+
+for url in $etcd_peer_urls; do
+    case "$url" in
+        *$ec2_instance_ip*) continue;;
+    esac
+
+    etcd_members=$(curl -f -s $url/v2/members)
+
+    if [[ $? == 0 && $etcd_members ]]; then
+        etcd_good_member_url="$url"
+		echo "etcd_members=$etcd_members"
+        etcd_existing_peer_urls=$(echo "$etcd_members" | jq --raw-output .[][].peerURLs[0])
+		etcd_existing_peer_names=$(echo "$etcd_members" | jq --raw-output .[][].name)
+	break
+    fi
+done
+
+echo "etcd_good_member_url=$etcd_good_member_url"
+echo "etcd_existing_peer_urls=$etcd_existing_peer_urls"
+echo "etcd_existing_peer_names=$etcd_existing_peer_names"
+
+# if I am already listed as a member of the cluster assume that this is a new cluster
+if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_id"* ]]; then
+    echo "joining existing cluster"
+
+    # eject bad members from cluster
+    peer_regexp=$(echo "$etcd_peer_urls" | sed 's/^.*http:\/\/\([0-9.]*\):[0-9]*.*$/contains(\\"\1\\")/' | xargs | sed 's/  */ or /g')
+    if [[ ! $peer_regexp ]]; then
+        echo "$pkg: failed to create peer regular expression"
+        exit 5
+    fi
+    
+    echo "peer_regexp=$peer_regexp"
+    bad_peer=$(echo "$etcd_members" | jq --raw-output ".[] | map(select(.peerURLs[] | $peer_regexp | not )) | .[].id")
+    echo "bad_peer=$bad_peer"
+
+    if [[ $bad_peer ]]; then
+        for bp in $bad_peer; do
+            echo "removing bad peer $bp"
+            if ! curl -f -s "$etcd_good_member_url/v2/members/$bp" -XDELETE; then
+                echo "$pkg: ERROR: failed to remove bad peer: $bad_peer"
+                exit 6
+            fi
+        done
+    fi
+    
+    # join an existing cluster
+    echo "$pkg: adding instance ID $ec2_instance_id with IP $ec2_instance_ip"
+    if ! curl -f -s -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:2380\"], \"name\": \"$ec2_instance_id\"}"; then
+    	echo "$pkg: unable to add this machine to the cluster"
+    	exit 7
+	fi
+    
+    etcd_initial_cluster=$(curl -s -f "$etcd_good_member_url/v2/members" | jq --raw-output '.[] | map(.name + "=" + .peerURLs[0]) | .[]' | xargs | sed 's/  */,/g')
+    echo "initial_cluster=$initial_cluster"
+    if [[ ! $etcd_initial_cluster ]]; then
+        echo "$pkg: docker command to get etcd peers failed"
+        exit 8
+    fi
+    
+        cat > "$etcd_peers_file_path" <<EOF
+ETCD_INITIAL_CLUSTER_STATE=existing
+ETCD_NAME=$ec2_instance_id
+ETCD_INITIAL_CLUSTER="$etcd_initial_cluster"
+EOF
+    
+else
+    # create a new cluster
+    echo "creating new cluster"
+
+    etcd_initial_cluster=$(aws ec2 describe-instances --region us-east-1 --instance-ids $(aws autoscaling describe-auto-scaling-groups --region us-east-1 --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r '.Reservations[].Instances | map(.InstanceId + "=http://" + .NetworkInterfaces[].PrivateIpAddress + ":2380")[]' | xargs | sed 's/  */,/g')
+    if [[ ! $etcd_initial_cluster ]]; then
+        echo "$pkg: unable to get peers from auto scaling group"
+        exit 9
+    fi
+
+    cat > "$etcd_peers_file_path" <<EOF
+ETCD_INITIAL_CLUSTER_STATE=new
+ETCD_NAME=$ec2_instance_id
+ETCD_INITIAL_CLUSTER="$etcd_initial_cluster"
+EOF
+fi

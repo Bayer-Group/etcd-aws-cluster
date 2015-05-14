@@ -6,7 +6,6 @@ RUN apk --update add \
       jq \
       curl \
       wget \
-      vim \
       bash &&\
     pip install --upgrade awscli &&\
     mkdir /root/.aws

@@ -4,8 +4,8 @@ version="0.3"
 etcd_peers_file_path="/etc/sysconfig/etcd-peers"
 
 #if the script has already run just exit
-if [ ! -f "$etcd_peers_file_path" ]; then
-    echo "$pkg: etcd-peers file already created, exiting"
+if [ -f "$etcd_peers_file_path" ]; then
+    echo "$pkg: etcd-peers file $etcd_peers_file_path already created, exiting"
     exit 0
 fi
 

@@ -3,6 +3,12 @@ pkg="getPeers"
 version="0.3"
 etcd_peers_file_path="/etc/sysconfig/etcd-peers"
 
+#if the script has already run just exit
+if [ ! -f "etcd_peers_file_path" ]; then
+    echo "$pkg: etcd-peers file already created, exiting"
+    exit 0
+fi
+
 ec2_instance_id=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
 if [[ ! $ec2_instance_id ]]; then
     echo "$pkg: failed to get instance id from instance metadata"

@@ -2,6 +2,11 @@
 pkg="getPeers"
 version="0.3"
 etcd_peers_file_path="/etc/sysconfig/etcd-peers"
+region=${REGION:-"us-east-1"}
+
+# ETCD API https://coreos.com/etcd/docs/2.0.11/other_apis.html
+ADD_OK=201
+DELETE_OK=204
 
 #if the script has already run just exit
 if [ -f "$etcd_peers_file_path" ]; then
@@ -21,13 +26,13 @@ if [[ ! $ec2_instance_ip ]]; then
     exit 2
 fi
 
-asg_name=$(aws autoscaling describe-auto-scaling-groups --region us-east-1 | jq --raw-output ".[] | map(select(.Instances[].InstanceId | contains(\"$ec2_instance_id\"))) | .[].AutoScalingGroupName")
+asg_name=$(aws autoscaling describe-auto-scaling-groups --region $region | jq --raw-output ".[] | map(select(.Instances[].InstanceId | contains(\"$ec2_instance_id\"))) | .[].AutoScalingGroupName")
 if [[ ! $asg_name ]]; then
     echo "$pkg: failed to get the auto scaling group name"
     exit 3
 fi
 
-etcd_peer_urls=$(aws ec2 describe-instances --region us-east-1 --instance-ids $(aws autoscaling describe-auto-scaling-groups --region us-east-1 --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r '.Reservations[].Instances | map("http://" + .NetworkInterfaces[].PrivateIpAddress + ":2379")[]')
+etcd_peer_urls=$(aws ec2 describe-instances --region $region --instance-ids $(aws autoscaling describe-auto-scaling-groups --region $region --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r '.Reservations[].Instances | map("http://" + .NetworkInterfaces[].PrivateIpAddress + ":2379")[]')
 if [[ ! $etcd_peer_urls ]]; then
     echo "$pkg: unable to find members of auto scaling group"
     exit 4
@@ -77,8 +82,10 @@ if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_i
     if [[ $bad_peer ]]; then
         for bp in $bad_peer; do
             echo "removing bad peer $bp"
-            if ! curl -f -s "$etcd_good_member_url/v2/members/$bp" -XDELETE; then
-                echo "$pkg: ERROR: failed to remove bad peer: $bad_peer"
+            status=$(curl -f -sw %{http_code} "$etcd_good_member_url/v2/members/$bp" -XDELETE)
+            if [ "$status" != "$DELETE_OK" ];
+            then
+                echo "$pkg: ERROR: failed to remove bad peer: $bad_peer, return code $status."
                 exit 6
             fi
         done
@@ -93,8 +100,10 @@ if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_i
     
     # join an existing cluster
     echo "adding instance ID $ec2_instance_id with IP $ec2_instance_ip"
-    if ! curl -f -s -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:2380\"], \"name\": \"$ec2_instance_id\"}"; then
-    	echo "$pkg: unable to add this machine to the cluster"
+    status=$(curl -f -sw %{http_code} -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:2380\"], \"name\": \"$ec2_instance_id\"}")
+    if [ $status != "$ADD_OK" ];
+    then
+        echo "$pkg: unable to add $ec2_instance_ip to the cluster: return code $status."
     	exit 7
     fi
     
@@ -108,7 +117,7 @@ else
     # create a new cluster
     echo "creating new cluster"
 
-    etcd_initial_cluster=$(aws ec2 describe-instances --region us-east-1 --instance-ids $(aws autoscaling describe-auto-scaling-groups --region us-east-1 --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r '.Reservations[].Instances | map(.InstanceId + "=http://" + .NetworkInterfaces[].PrivateIpAddress + ":2380")[]' | xargs | sed 's/  */,/g')
+    etcd_initial_cluster=$(aws ec2 describe-instances --region $region --instance-ids $(aws autoscaling describe-auto-scaling-groups --region $region --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r '.Reservations[].Instances | map(.InstanceId + "=http://" + .NetworkInterfaces[].PrivateIpAddress + ":2380")[]' | xargs | sed 's/  */,/g')
     echo "etcd_initial_cluster=$etcd_initial_cluster"
     if [[ ! $etcd_initial_cluster ]]; then
         echo "$pkg: unable to get peers from auto scaling group"

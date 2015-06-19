@@ -1,12 +1,17 @@
 #! /bin/bash
-pkg="getPeers"
-version="0.3"
+pkg="etcd-aws-cluster"
+version="0.4"
 etcd_peers_file_path="/etc/sysconfig/etcd-peers"
-region=${REGION:-"us-east-1"}
+region=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/document | jq --raw-output .region)
+if [[ ! $region ]]; then
+    echo "$pkg: failed to get region"
+    exit 1
+fi
+
 
 # ETCD API https://coreos.com/etcd/docs/2.0.11/other_apis.html
-ADD_OK=201
-DELETE_OK=204
+add_ok=201
+delete_ok=204
 
 #if the script has already run just exit
 if [ -f "$etcd_peers_file_path" ]; then
@@ -17,25 +22,25 @@ fi
 ec2_instance_id=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
 if [[ ! $ec2_instance_id ]]; then
     echo "$pkg: failed to get instance id from instance metadata"
-    exit 1
+    exit 2
 fi
 
 ec2_instance_ip=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
 if [[ ! $ec2_instance_ip ]]; then
     echo "$pkg: failed to get instance IP address"
-    exit 2
+    exit 3
 fi
 
 asg_name=$(aws autoscaling describe-auto-scaling-groups --region $region | jq --raw-output ".[] | map(select(.Instances[].InstanceId | contains(\"$ec2_instance_id\"))) | .[].AutoScalingGroupName")
 if [[ ! $asg_name ]]; then
     echo "$pkg: failed to get the auto scaling group name"
-    exit 3
+    exit 4
 fi
 
 etcd_peer_urls=$(aws ec2 describe-instances --region $region --instance-ids $(aws autoscaling describe-auto-scaling-groups --region $region --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r '.Reservations[].Instances | map("http://" + .NetworkInterfaces[].PrivateIpAddress + ":2379")[]')
 if [[ ! $etcd_peer_urls ]]; then
     echo "$pkg: unable to find members of auto scaling group"
-    exit 4
+    exit 5
 fi
 
 echo "etcd_peer_urls=$etcd_peer_urls"
@@ -72,7 +77,7 @@ if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_i
     peer_regexp=$(echo "$etcd_peer_urls" | sed 's/^.*http:\/\/\([0-9.]*\):[0-9]*.*$/contains(\\"\1\\")/' | xargs | sed 's/  */ or /g')
     if [[ ! $peer_regexp ]]; then
         echo "$pkg: failed to create peer regular expression"
-        exit 5
+        exit 6
     fi
     
     echo "peer_regexp=$peer_regexp"
@@ -82,11 +87,10 @@ if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_i
     if [[ $bad_peer ]]; then
         for bp in $bad_peer; do
             echo "removing bad peer $bp"
-            status=$(curl -f -sw %{http_code} "$etcd_good_member_url/v2/members/$bp" -XDELETE)
-            if [ "$status" != "$DELETE_OK" ];
-            then
+            status=$(curl -f -s -w %{http_code} "$etcd_good_member_url/v2/members/$bp" -XDELETE)
+            if [[ $status != $delete_ok ]]; then
                 echo "$pkg: ERROR: failed to remove bad peer: $bad_peer, return code $status."
-                exit 6
+                exit 7
             fi
         done
     fi
@@ -100,14 +104,13 @@ if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_i
     
     # join an existing cluster
     echo "adding instance ID $ec2_instance_id with IP $ec2_instance_ip"
-    status=$(curl -f -sw %{http_code} -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:2380\"], \"name\": \"$ec2_instance_id\"}")
-    if [ $status != "$ADD_OK" ];
-    then
+    status=$(curl -f -s -w %{http_code} -o /dev/null -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:2380\"], \"name\": \"$ec2_instance_id\"}")
+    if [[ $status != $add_ok ]]; then
         echo "$pkg: unable to add $ec2_instance_ip to the cluster: return code $status."
-    	exit 7
+    	exit 9
     fi
     
-        cat > "$etcd_peers_file_path" <<EOF
+    cat > "$etcd_peers_file_path" <<EOF
 ETCD_INITIAL_CLUSTER_STATE=existing
 ETCD_NAME=$ec2_instance_id
 ETCD_INITIAL_CLUSTER="$etcd_initial_cluster"
@@ -121,7 +124,7 @@ else
     echo "etcd_initial_cluster=$etcd_initial_cluster"
     if [[ ! $etcd_initial_cluster ]]; then
         echo "$pkg: unable to get peers from auto scaling group"
-        exit 9
+        exit 10
     fi
 
     cat > "$etcd_peers_file_path" <<EOF
@@ -130,3 +133,5 @@ ETCD_NAME=$ec2_instance_id
 ETCD_INITIAL_CLUSTER="$etcd_initial_cluster"
 EOF
 fi
+
+exit 0

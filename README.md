@@ -47,6 +47,3 @@ Usage
 
 ```docker run -v /etc/sysconfig/:/etc/sysconfig/ MonsantoCo/etcd-aws-cluster```
 
-Or pass in REGION (default is `us-east-1`)
-
-```docker run -e REGION=us-west-2 -v /etc/sysconfig/:/etc/sysconfig/ MonsantoCo/etcd-aws-cluster```

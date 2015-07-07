@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/bin/bash -x
 pkg="etcd-aws-cluster"
 version="0.4"
 etcd_peers_file_path="/etc/sysconfig/etcd-peers"
@@ -7,7 +7,7 @@ if [[ ! $region ]]; then
     echo "$pkg: failed to get region"
     exit 1
 fi
-
+asg_name=${asg_name:-""}
 
 # ETCD API https://coreos.com/etcd/docs/2.0.11/other_apis.html
 add_ok=201
@@ -32,7 +32,10 @@ if [[ ! $ec2_instance_ip ]]; then
     exit 3
 fi
 
-asg_name=$(aws autoscaling describe-auto-scaling-groups --region $region | jq --raw-output ".[] | map(select(.Instances[].InstanceId | contains(\"$ec2_instance_id\"))) | .[].AutoScalingGroupName")
+my_asg_name=$(aws autoscaling describe-auto-scaling-groups --region $region | jq --raw-output ".[] | map(select(.Instances[].InstanceId | contains(\"$ec2_instance_id\"))) | .[].AutoScalingGroupName")
+if [ -z "$asg_name" ]; then
+    asg_name=$my_asg_name
+fi
 if [[ ! $asg_name ]]; then
     echo "$pkg: failed to get the auto scaling group name"
     exit 4
@@ -70,53 +73,56 @@ echo "etcd_good_member_url=$etcd_good_member_url"
 echo "etcd_existing_peer_urls=$etcd_existing_peer_urls"
 echo "etcd_existing_peer_names=$etcd_existing_peer_names"
 
-# if I am already listed as a member of the cluster assume that this is a new cluster
+# if I am already listed as a member of the cluster assume that this is an existing cluster
 if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_id"* ]]; then
     echo "joining existing cluster"
 
-    # eject bad members from cluster
-    peer_regexp=$(echo "$etcd_peer_urls" | sed 's/^.*http:\/\/\([0-9.]*\):[0-9]*.*$/contains(\\"\1\\")/' | xargs | sed 's/  */ or /g')
-    if [[ ! $peer_regexp ]]; then
-        echo "$pkg: failed to create peer regular expression"
-        exit 6
-    fi
-    
-    echo "peer_regexp=$peer_regexp"
-    bad_peer=$(echo "$etcd_members" | jq --raw-output ".[] | map(select(.peerURLs[] | $peer_regexp | not )) | .[].id")
-    echo "bad_peer=$bad_peer"
+    # Only modify members when we are joining an asg that this instance belong to.
+    if [ "$asg_name" == "$my_asg_name" ]; then
+        # eject bad members from cluster
+        peer_regexp=$(echo "$etcd_peer_urls" | sed 's/^.*http:\/\/\([0-9.]*\):[0-9]*.*$/contains(\\"\1\\")/' | xargs | sed 's/  */ or /g')
+        if [[ ! $peer_regexp ]]; then
+            echo "$pkg: failed to create peer regular expression"
+            exit 6
+        fi
 
-    if [[ $bad_peer ]]; then
-        for bp in $bad_peer; do
-            echo "removing bad peer $bp"
-            status=$(curl -f -s -w %{http_code} "$etcd_good_member_url/v2/members/$bp" -XDELETE)
-            if [[ $status != $delete_ok ]]; then
-                echo "$pkg: ERROR: failed to remove bad peer: $bad_peer, return code $status."
-                exit 7
-            fi
-        done
+        echo "peer_regexp=$peer_regexp"
+        bad_peer=$(echo "$etcd_members" | jq --raw-output ".[] | map(select(.peerURLs[] | $peer_regexp | not )) | .[].id")
+        echo "bad_peer=$bad_peer"
+
+        if [[ $bad_peer ]]; then
+            for bp in $bad_peer; do
+                echo "removing bad peer $bp"
+                status=$(curl -f -s -w %{http_code} "$etcd_good_member_url/v2/members/$bp" -XDELETE)
+                if [[ $status != $delete_ok ]]; then
+                    echo "$pkg: ERROR: failed to remove bad peer: $bad_peer, return code $status."
+                    exit 7
+                fi
+            done
+        fi
+
+        # join an existing cluster
+        echo "adding instance ID $ec2_instance_id with IP $ec2_instance_ip"
+        status=$(curl -f -s -w %{http_code} -o /dev/null -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:2380\"], \"name\": \"$ec2_instance_id\"}")
+        if [[ $status != $add_ok && $status != $already_added ]]; then
+            echo "$pkg: unable to add $ec2_instance_ip to the cluster: return code $status."
+            exit 9
+        fi
+
     fi
-    
     etcd_initial_cluster=$(curl -s -f "$etcd_good_member_url/v2/members" | jq --raw-output '.[] | map(.name + "=" + .peerURLs[0]) | .[]' | xargs | sed 's/  */,/g')$(echo ",$ec2_instance_id=http://${ec2_instance_ip}:2380")
     echo "etcd_initial_cluster=$etcd_initial_cluster"
     if [[ ! $etcd_initial_cluster ]]; then
         echo "$pkg: docker command to get etcd peers failed"
         exit 8
     fi
-    
-    # join an existing cluster
-    echo "adding instance ID $ec2_instance_id with IP $ec2_instance_ip"
-    status=$(curl -f -s -w %{http_code} -o /dev/null -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:2380\"], \"name\": \"$ec2_instance_id\"}")
-    if [[ $status != $add_ok && $status != $already_added ]]; then
-        echo "$pkg: unable to add $ec2_instance_ip to the cluster: return code $status."
-    	exit 9
-    fi
-    
+
     cat > "$etcd_peers_file_path" <<EOF
 ETCD_INITIAL_CLUSTER_STATE=existing
 ETCD_NAME=$ec2_instance_id
 ETCD_INITIAL_CLUSTER="$etcd_initial_cluster"
 EOF
-    
+
 else
     # create a new cluster
     echo "creating new cluster"

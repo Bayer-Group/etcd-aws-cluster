@@ -92,7 +92,7 @@ echo "etcd_existing_peer_names=$etcd_existing_peer_names"
 # if I am already listed as a member of the cluster assume that this is a new cluster
 if [[ $exit_after_ejecting_bad_peers || ( $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_id"* ) ]]; then
     
-    if [[ ! $exit_after_ejecting_bad_peers ]]; then
+    if [[ "$exit_after_ejecting_bad_peers" = false ]]; then
     	echo "joining existing cluster"
     fi
 
@@ -118,7 +118,7 @@ if [[ $exit_after_ejecting_bad_peers || ( $etcd_existing_peer_urls && $etcd_exis
         done
     fi
     
-    if [[ $exit_after_ejecting_bad_peers ]]; then
+    if [[ "$exit_after_ejecting_bad_peers" = true ]]; then
     	echo "checked for bad peers, now exiting because the cluster is already running"
     	exit 0
     fi

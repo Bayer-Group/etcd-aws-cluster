@@ -17,28 +17,6 @@ delete_ok=204
 etcd_self_state=
 exit_after_ejecting_bad_peers=false
 
-#if the script has already run exit or check for bad peers
-if [ -f "$etcd_peers_file_path" ]; then
-    
-    # IMPORTANT:
-    # If the current instance is already leading a healthy cluster we must check
-    # for bad peers because if the autoscaling group removes members after scaling
-    # down it could result in losing quorum and require manual intervention if the
-    # terminated instances are not ejected from the etcd cluster!
-    
-    etcd_self_state=$(curl -f -s http://127.0.0.1:4001/v2/stats/self | jq --raw-output .state)
-    echo "$pkg: etcd state for this instance is $etcd_self_state"
-    
-    if [ "$etcd_self_state" == "StateLeader" ]; then
-    	exit_after_ejecting_bad_peers=true
-    	echo "$pkg: etcd-peers file $etcd_peers_file_path already created"
-    	echo "$pkg: checking for terminated ec2 instances to remove from the etcd cluster"
-    else
-    	echo "$pkg: etcd-peers file $etcd_peers_file_path already created, exiting"
-    	exit 0
-    fi
-fi
-
 ec2_instance_id=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
 if [[ ! $ec2_instance_id ]]; then
     echo "$pkg: failed to get instance id from instance metadata"
@@ -49,6 +27,28 @@ ec2_instance_ip=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
 if [[ ! $ec2_instance_ip ]]; then
     echo "$pkg: failed to get instance IP address"
     exit 3
+fi
+
+#if the script has already run exit or check for bad peers
+if [ -f "$etcd_peers_file_path" ]; then
+    
+    # IMPORTANT:
+    # If the current instance is already leading a healthy cluster we must check
+    # for bad peers because if the autoscaling group removes members after scaling
+    # down it could result in losing quorum and require manual intervention if the
+    # terminated instances are not ejected from the etcd cluster!
+    
+    etcd_self_state=$(curl -f -s http://$ec2_instance_ip:4001/v2/stats/self | jq --raw-output .state)
+    echo "$pkg: etcd state for this instance is $etcd_self_state"
+    
+    if [ "$etcd_self_state" == "StateLeader" ]; then
+    	exit_after_ejecting_bad_peers=true
+    	echo "$pkg: etcd-peers file $etcd_peers_file_path already created"
+    	echo "$pkg: checking for terminated ec2 instances to remove from the etcd cluster"
+    else
+    	echo "$pkg: etcd-peers file $etcd_peers_file_path already created, exiting"
+    	exit 0
+    fi
 fi
 
 asg_name=$(aws autoscaling describe-auto-scaling-groups --region $region | jq --raw-output ".[] | map(select(.Instances[].InstanceId | contains(\"$ec2_instance_id\"))) | .[].AutoScalingGroupName")

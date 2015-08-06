@@ -90,7 +90,7 @@ echo "etcd_existing_peer_urls=$etcd_existing_peer_urls"
 echo "etcd_existing_peer_names=$etcd_existing_peer_names"
 
 # if I am already listed as a member of the cluster assume that this is a new cluster
-if [[ $exit_after_ejecting_bad_peers || ( $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_id"* ) ]]; then
+if [[ "$exit_after_ejecting_bad_peers" = true || ( $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_id"* ) ]]; then
     
     if [[ "$exit_after_ejecting_bad_peers" = false ]]; then
     	echo "joining existing cluster"

@@ -14,10 +14,29 @@ add_ok=201
 already_added=409
 delete_ok=204
 
-#if the script has already run just exit
+etcd_self_state=
+exit_after_ejecting_bad_peers=false
+
+#if the script has already run exit or check for bad peers
 if [ -f "$etcd_peers_file_path" ]; then
-    echo "$pkg: etcd-peers file $etcd_peers_file_path already created, exiting"
-    exit 0
+    
+    # IMPORTANT:
+    # If the current instance is already leading a healthy cluster we must check
+    # for bad peers because if the autoscaling group removes members after scaling
+    # down it could result in losing quorum and require manual intervention if the
+    # terminated instances are not ejected from the etcd cluster!
+    
+    etcd_self_state=$(curl -f -s http://127.0.0.1:4001/v2/stats/self | jq --raw-output .state)
+    echo "$pkg: etcd state for this instance is $etcd_self_state"
+    
+    if [ "$etcd_self_state" == "StateLeader" ]; then
+    	exit_after_ejecting_bad_peers=true
+    	echo "$pkg: etcd-peers file $etcd_peers_file_path already created"
+    	echo "$pkg: checking for terminated ec2 instances to remove from the etcd cluster"
+    else
+    	echo "$pkg: etcd-peers file $etcd_peers_file_path already created, exiting"
+    	exit 0
+    fi
 fi
 
 ec2_instance_id=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
@@ -71,8 +90,11 @@ echo "etcd_existing_peer_urls=$etcd_existing_peer_urls"
 echo "etcd_existing_peer_names=$etcd_existing_peer_names"
 
 # if I am already listed as a member of the cluster assume that this is a new cluster
-if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_id"* ]]; then
-    echo "joining existing cluster"
+if [[ $exit_after_ejecting_bad_peers || ( $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_id"* ) ]]; then
+    
+    if [[ ! $exit_after_ejecting_bad_peers ]]; then
+    	echo "joining existing cluster"
+    fi
 
     # eject bad members from cluster
     peer_regexp=$(echo "$etcd_peer_urls" | sed 's/^.*http:\/\/\([0-9.]*\):[0-9]*.*$/contains(\\"\/\/\1:\\")/' | xargs | sed 's/  */ or /g')
@@ -94,6 +116,11 @@ if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_i
                 exit 7
             fi
         done
+    fi
+    
+    if [[ $exit_after_ejecting_bad_peers ]]; then
+    	echo "checked for bad peers, now exiting because the cluster is already running"
+    	exit 0
     fi
     
     etcd_initial_cluster=$(curl -s -f "$etcd_good_member_url/v2/members" | jq --raw-output '.[] | map(.name + "=" + .peerURLs[0]) | .[]' | xargs | sed 's/  */,/g')$(echo ",$ec2_instance_id=http://${ec2_instance_ip}:7001")

@@ -14,6 +14,10 @@ add_ok=201
 already_added=409
 delete_ok=204
 
+# Allow default client/server ports to be changed if necessary
+client_port=${ETCD_CLIENT_PORT:-2379}
+server_port=${ETCD_SERVER_PORT:-2380}
+
 etcd_self_state=
 exit_after_ejecting_bad_peers=false
 
@@ -38,7 +42,7 @@ if [ -f "$etcd_peers_file_path" ]; then
     # down it could result in losing quorum and require manual intervention if the
     # terminated instances are not ejected from the etcd cluster!
     
-    etcd_self_state=$(curl -f -s http://$ec2_instance_ip:4001/v2/stats/self | jq --raw-output .state)
+    etcd_self_state=$(curl -f -s http://$ec2_instance_ip:$client_port/v2/stats/self | jq --raw-output .state)
     echo "$pkg: etcd state for this instance is $etcd_self_state"
     
     if [ "$etcd_self_state" == "StateLeader" ]; then
@@ -57,7 +61,7 @@ if [[ ! $asg_name ]]; then
     exit 4
 fi
 
-etcd_peer_urls=$(aws ec2 describe-instances --region $region --instance-ids $(aws autoscaling describe-auto-scaling-groups --region $region --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r '.Reservations[].Instances | map("http://" + .NetworkInterfaces[].PrivateIpAddress + ":4001")[]')
+etcd_peer_urls=$(aws ec2 describe-instances --region $region --instance-ids $(aws autoscaling describe-auto-scaling-groups --region $region --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r ".Reservations[].Instances | map(\"http://\" + .NetworkInterfaces[].PrivateIpAddress + \":$client_port\")[]")
 if [[ ! $etcd_peer_urls ]]; then
     echo "$pkg: unable to find members of auto scaling group"
     exit 5
@@ -123,7 +127,7 @@ if [[ "$exit_after_ejecting_bad_peers" = true || ( $etcd_existing_peer_urls && $
     	exit 0
     fi
     
-    etcd_initial_cluster=$(curl -s -f "$etcd_good_member_url/v2/members" | jq --raw-output '.[] | map(.name + "=" + .peerURLs[0]) | .[]' | xargs | sed 's/  */,/g')$(echo ",$ec2_instance_id=http://${ec2_instance_ip}:7001")
+    etcd_initial_cluster=$(curl -s -f "$etcd_good_member_url/v2/members" | jq --raw-output '.[] | map(.name + "=" + .peerURLs[0]) | .[]' | xargs | sed 's/  */,/g')$(echo ",$ec2_instance_id=http://${ec2_instance_ip}:$server_port")
     echo "etcd_initial_cluster=$etcd_initial_cluster"
     if [[ ! $etcd_initial_cluster ]]; then
         echo "$pkg: docker command to get etcd peers failed"
@@ -132,7 +136,7 @@ if [[ "$exit_after_ejecting_bad_peers" = true || ( $etcd_existing_peer_urls && $
     
     # join an existing cluster
     echo "adding instance ID $ec2_instance_id with IP $ec2_instance_ip"
-    status=$(curl -f -s -w %{http_code} -o /dev/null -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:7001\"], \"name\": \"$ec2_instance_id\"}")
+    status=$(curl -f -s -w %{http_code} -o /dev/null -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:$server_port\"], \"name\": \"$ec2_instance_id\"}")
     if [[ $status != $add_ok && $status != $already_added ]]; then
         echo "$pkg: unable to add $ec2_instance_ip to the cluster: return code $status."
     	exit 9
@@ -148,7 +152,7 @@ else
     # create a new cluster
     echo "creating new cluster"
 
-    etcd_initial_cluster=$(aws ec2 describe-instances --region $region --instance-ids $(aws autoscaling describe-auto-scaling-groups --region $region --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r '.Reservations[].Instances | map(.InstanceId + "=http://" + .NetworkInterfaces[].PrivateIpAddress + ":7001")[]' | xargs | sed 's/  */,/g')
+    etcd_initial_cluster=$(aws ec2 describe-instances --region $region --instance-ids $(aws autoscaling describe-auto-scaling-groups --region $region --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r ".Reservations[].Instances | map(.InstanceId + \"=http://\" + .NetworkInterfaces[].PrivateIpAddress + \":$server_port\")[]" | xargs | sed 's/  */,/g')
     echo "etcd_initial_cluster=$etcd_initial_cluster"
     if [[ ! $etcd_initial_cluster ]]; then
         echo "$pkg: unable to get peers from auto scaling group"

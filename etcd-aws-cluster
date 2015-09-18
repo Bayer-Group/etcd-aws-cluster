@@ -41,7 +41,7 @@ fi
 etcd_client_scheme=${ETCD_CLIENT_SCHEME:-http}
 echo "client_client_scheme=$etcd_client_scheme"
 
-etcd_peer_urls=$(aws ec2 describe-instances --region $region --instance-ids $(aws autoscaling describe-auto-scaling-groups --region $region --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[] | select(.LifecycleState  == "InService") | .InstanceId | xargs) | jq -r ".Reservations[].Instances | map(\"$etcd_client_scheme://\" + .NetworkInterfaces[].PrivateIpAddress + \":2379\")[]")
+etcd_peer_urls=$(aws ec2 describe-instances --region $region --instance-ids $(aws autoscaling describe-auto-scaling-groups --region $region --auto-scaling-group-name $asg_name | jq '.AutoScalingGroups[0].Instances[] | select(.LifecycleState  == "InService") | .InstanceId' | xargs) | jq -r ".Reservations[].Instances | map(\"$etcd_client_scheme://\" + .NetworkInterfaces[].PrivateIpAddress + \":2379\")[]")
 
 if [[ ! $etcd_peer_urls ]]; then
     echo "$pkg: unable to find members of auto scaling group"

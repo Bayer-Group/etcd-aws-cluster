@@ -15,7 +15,7 @@ COPY etcd-aws-cluster /etcd-aws-cluster
 # Expose volume for adding credentials
 VOLUME ["/root/.aws"]
 
-#Expose directory to write output to
-VOLUME ["/etc/sysconfig/"]
+# Expose directory to write output to, and to potentially read certs from
+VOLUME ["/etc/sysconfig/", "/etc/certs"]
 
 ENTRYPOINT /etcd-aws-cluster

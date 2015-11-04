@@ -1,13 +1,12 @@
 #! /bin/bash
 pkg="etcd-aws-cluster"
-version="0.4"
+version="0.5"
 etcd_peers_file_path="/etc/sysconfig/etcd-peers"
 region=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/document | jq --raw-output .region)
 if [[ ! $region ]]; then
     echo "$pkg: failed to get region"
     exit 1
 fi
-
 
 # ETCD API https://coreos.com/etcd/docs/2.0.11/other_apis.html
 add_ok=201
@@ -32,10 +31,17 @@ if [[ ! $ec2_instance_ip ]]; then
     exit 3
 fi
 
-asg_name=$(aws autoscaling describe-auto-scaling-groups --region $region | jq --raw-output ".[] | map(select(.Instances[].InstanceId | contains(\"$ec2_instance_id\"))) | .[].AutoScalingGroupName")
-if [[ ! $asg_name ]]; then
-    echo "$pkg: failed to get the auto scaling group name"
-    exit 4
+# If we're in proxy mode we don't have to look this up and expect an env var
+if [[ ! $PROXY_ASG ]]; then
+    etcd_proxy=off
+    asg_name=$(aws autoscaling describe-auto-scaling-groups --region $region | jq --raw-output ".[] | map(select(.Instances[].InstanceId | contains(\"$ec2_instance_id\"))) | .[].AutoScalingGroupName")
+    if [[ ! $asg_name ]]; then
+        echo "$pkg: failed to get the auto scaling group name"
+        exit 4
+    fi
+else
+    etcd_proxy=on
+    asg_name=$PROXY_ASG
 fi
 
 etcd_client_scheme=${ETCD_CLIENT_SCHEME:-http}
@@ -56,6 +62,7 @@ etcd_good_member_url=
 
 for url in $etcd_peer_urls; do
     case "$url" in
+        # If we're in proxy mode this is an error, but unlikely to happen?
         *$ec2_instance_ip*) continue;;
     esac
 
@@ -74,7 +81,8 @@ echo "etcd_good_member_url=$etcd_good_member_url"
 echo "etcd_existing_peer_urls=$etcd_existing_peer_urls"
 echo "etcd_existing_peer_names=$etcd_existing_peer_names"
 
-# if I am already listed as a member of the cluster assume that this is a new cluster
+# if I am not listed as a member of the cluster assume that this is a existing cluster
+# this will also be the case for a proxy situation
 if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_id"* ]]; then
     echo "joining existing cluster"
 
@@ -100,27 +108,41 @@ if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_i
         done
     fi
 
-    etcd_initial_cluster=$(curl $ETCD_CURLOPTS -s -f "$etcd_good_member_url/v2/members" | jq --raw-output '.[] | map(.name + "=" + .peerURLs[0]) | .[]' | xargs | sed 's/  */,/g')$(echo ",$ec2_instance_id=http://${ec2_instance_ip}:2380")
-    echo "etcd_initial_cluster=$etcd_initial_cluster"
-    if [[ ! $etcd_initial_cluster ]]; then
-        echo "$pkg: docker command to get etcd peers failed"
-        exit 8
-    fi
+    # If we're not a proxy we add ourselves as a member to the cluster
+    if [[ ! $PROXY_ASG ]]; then
+        etcd_initial_cluster=$(curl $ETCD_CURLOPTS -s -f "$etcd_good_member_url/v2/members" | jq --raw-output '.[] | map(.name + "=" + .peerURLs[0]) | .[]' | xargs | sed 's/  */,/g')$(echo ",$ec2_instance_id=http://${ec2_instance_ip}:2380")
+        echo "etcd_initial_cluster=$etcd_initial_cluster"
+        if [[ ! $etcd_initial_cluster ]]; then
+            echo "$pkg: docker command to get etcd peers failed"
+            exit 8
+        fi
 
-    # join an existing cluster
-    echo "adding instance ID $ec2_instance_id with IP $ec2_instance_ip"
-    status=$(curl $ETCD_CURLOPTS -f -s -w %{http_code} -o /dev/null -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:2380\"], \"name\": \"$ec2_instance_id\"}")
-    if [[ $status != $add_ok && $status != $already_added ]]; then
-        echo "$pkg: unable to add $ec2_instance_ip to the cluster: return code $status."
-    	exit 9
+        # join an existing cluster
+        echo "adding instance ID $ec2_instance_id with IP $ec2_instance_ip"
+        status=$(curl $ETCD_CURLOPTS -f -s -w %{http_code} -o /dev/null -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:2380\"], \"name\": \"$ec2_instance_id\"}")
+        if [[ $status != $add_ok && $status != $already_added ]]; then
+            echo "$pkg: unable to add $ec2_instance_ip to the cluster: return code $status."
+            exit 9
+        fi
+    # If we are a proxy we just want the list for the actual cluster
+    else
+        etcd_initial_cluster=$(curl $ETCD_CURLOPTS -s -f "$etcd_good_member_url/v2/members" | jq --raw-output '.[] | map(.name + "=" + .peerURLs[0]) | .[]' | xargs | sed 's/  */,/g')
+        echo "etcd_initial_cluster=$etcd_initial_cluster"
+        if [[ ! $etcd_initial_cluster ]]; then
+            echo "$pkg: docker command to get etcd peers failed"
+            exit 8
+        fi
+
     fi
 
     cat > "$etcd_peers_file_path" <<EOF
 ETCD_INITIAL_CLUSTER_STATE=existing
 ETCD_NAME=$ec2_instance_id
 ETCD_INITIAL_CLUSTER="$etcd_initial_cluster"
+ETCD_PROXY=$etcd_proxy
 EOF
 
+# otherwise I was already listed as a member so assume that this is a new cluster
 else
     # create a new cluster
     echo "creating new cluster"

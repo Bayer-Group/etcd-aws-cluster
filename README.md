@@ -45,7 +45,7 @@ Workflow
 Usage
 -----
 
-```docker run -v /etc/sysconfig/:/etc/sysconfig/ MonsantoCo/etcd-aws-cluster```
+```docker run -v /etc/sysconfig/:/etc/sysconfig/ monsantoco/etcd-aws-cluster```
 
 Demo
 ----

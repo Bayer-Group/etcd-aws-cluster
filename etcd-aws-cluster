@@ -2,8 +2,8 @@
 pkg="etcd-aws-cluster"
 version="0.5"
 etcd_peers_file_path="/etc/sysconfig/etcd-peers"
-region=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/document | jq --raw-output .region)
-if [[ ! $region ]]; then
+export AWS_DEFAULT_REGION=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/document | jq --raw-output .region)
+if [[ ! $AWS_DEFAULT_REGION ]]; then
     echo "$pkg: failed to get region"
     exit 1
 fi
@@ -38,14 +38,18 @@ fi
 # If we're in proxy mode we don't have to look this up and expect an env var
 if [[ ! $PROXY_ASG ]]; then
     etcd_proxy=off
-    asg_name=$(aws autoscaling describe-auto-scaling-groups --region $region | jq --raw-output ".[] | map(select(.Instances[].InstanceId | contains(\"$ec2_instance_id\"))) | .[].AutoScalingGroupName")
+    asg_name=$(aws autoscaling describe-auto-scaling-groups | jq --raw-output ".[] | map(select(.Instances[].InstanceId | contains(\"$ec2_instance_id\"))) | .[].AutoScalingGroupName")
     if [[ ! $asg_name ]]; then
         echo "$pkg: failed to get the auto scaling group name"
         exit 4
     fi
 else
     etcd_proxy=on
-    asg_name=$PROXY_ASG
+    if [[ -n $ASG_BY_TAG ]]; then
+        asg_name=$(aws autoscaling describe-auto-scaling-groups | jq --raw-output ".[] | map(select(.Tags[].Value == \"$PROXY_ASG\")) | .[].AutoScalingGroupName")
+    else
+        asg_name=$PROXY_ASG
+    fi
 fi
 
 etcd_client_scheme=${ETCD_CLIENT_SCHEME:-http}
@@ -54,8 +58,7 @@ echo "client_client_scheme=$etcd_client_scheme"
 etcd_peer_scheme=${ETCD_PEER_SCHEME:-http}
 echo "peer_peer_scheme=$etcd_peer_scheme"
 
-etcd_peer_urls=$(aws ec2 describe-instances --region $region --instance-ids $(aws autoscaling describe-auto-scaling-groups --region $region --auto-scaling-group-name $asg_name | jq '.AutoScalingGroups[0].Instances[] | select(.LifecycleState  == "InService") | .InstanceId' | xargs) | jq -r ".Reservations[].Instances | map(\"$etcd_client_scheme://\" + .NetworkInterfaces[].PrivateIpAddress + \":$client_port\")[]")
-
+etcd_peer_urls=$(aws ec2 describe-instances --instance-ids $(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-name $asg_name | jq '.AutoScalingGroups[0].Instances[] | select(.LifecycleState  == "InService") | .InstanceId' | xargs) | jq -r ".Reservations[].Instances | map(\"$etcd_client_scheme://\" + .NetworkInterfaces[].PrivateIpAddress + \":2379\")[]")
 if [[ ! $etcd_peer_urls ]]; then
     echo "$pkg: unable to find members of auto scaling group"
     exit 5
@@ -153,7 +156,7 @@ else
     # create a new cluster
     echo "creating new cluster"
 
-    etcd_initial_cluster=$(aws ec2 describe-instances --region $region --instance-ids $(aws autoscaling describe-auto-scaling-groups --region $region --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r ".Reservations[].Instances | map(.InstanceId + \"=$etcd_peer_scheme://\" + .NetworkInterfaces[].PrivateIpAddress + \":$server_port\")[]" | xargs | sed 's/  */,/g')
+    etcd_initial_cluster=$(aws ec2 describe-instances --instance-ids $(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-name $asg_name | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r ".Reservations[].Instances | map(.InstanceId + \"=$etcd_peer_scheme://\" + .NetworkInterfaces[].PrivateIpAddress + \":2380\")[]" | xargs | sed 's/  */,/g')
     echo "etcd_initial_cluster=$etcd_initial_cluster"
     if [[ ! $etcd_initial_cluster ]]; then
         echo "$pkg: unable to get peers from auto scaling group"

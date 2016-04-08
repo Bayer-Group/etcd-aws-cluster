@@ -45,7 +45,14 @@ Workflow
 Usage
 -----
 
-```docker run -v /etc/sysconfig/:/etc/sysconfig/ MonsantoCo/etcd-aws-cluster```
+```docker run -v /etc/sysconfig/:/etc/sysconfig/ monsantoco/etcd-aws-cluster```
+
+Environment Variables
+* PROXY_ASG - If specified forces into proxy=on and uses the vaue of PROXY_ASG as the autocaling group that contains the master servers
+* ASG_BY_TAG - If specified in conjunction with PROXY_ASG uses the value of PROXY_ASG to look up the server by the Tag Name
+* ETCD_CLIENT_SCHEME - defaults to http
+* ETCD_PEER_SCHEME - defaults to http
+
 
 Demo
 ----

@@ -16,6 +16,12 @@ server_port=${ETCD_SERVER_PORT:-2380}
 add_ok=201
 already_added=409
 delete_ok=204
+delete_gone=410
+
+# Retry N times before giving up
+retry_times=${RETRY_TIMES:-10}
+# Add a sleep time to allow etcd client requets to finish
+wait_time=3
 
 #if the script has already run just exit
 if [ -f "$etcd_peers_file_path" ]; then
@@ -106,11 +112,18 @@ if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_i
 
     if [[ $bad_peer ]]; then
         for bp in $bad_peer; do
-            echo "removing bad peer $bp"
-            status=$(curl $ETCD_CURLOPTS -f -s -w %{http_code} "$etcd_good_member_url/v2/members/$bp" -XDELETE)
-            if [[ $status != $delete_ok ]]; then
+            status=0
+            retry=1
+            until [[ $status = $delete_ok || $status =  $delete_gone || $retry = $retry_times ]]; do
+                status=$(curl $ETCD_CURLOPTS -f -s -w %{http_code} "$etcd_good_member_url/v2/members/$bp" -XDELETE)
+                echo "$pkg: removing bad peer $bp, retry $((retry++)), return code $status."
+                sleep $wait_time
+            done
+            if [[ $status != $delete_ok && $status != $delete_gone ]]; then
                 echo "$pkg: ERROR: failed to remove bad peer: $bad_peer, return code $status."
                 exit 7
+            else
+                echo "$pkg: removed bad peer: $bad_peer, return code $status."
             fi
         done
     fi
@@ -125,11 +138,18 @@ if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_i
         fi
 
         # join an existing cluster
-        echo "adding instance ID $ec2_instance_id with IP $ec2_instance_ip"
-        status=$(curl $ETCD_CURLOPTS -f -s -w %{http_code} -o /dev/null -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"$etcd_peer_scheme://$ec2_instance_ip:$server_port\"], \"name\": \"$ec2_instance_id\"}")
+        status=0
+        retry=1
+        until [[ $status = $add_ok || $status = $already_added || $retry = $retry_times ]]; do
+            status=$(curl $ETCD_CURLOPTS -f -s -w %{http_code} -o /dev/null -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:2380\"], \"name\": \"$ec2_instance_id\"}")
+            echo "$pkg: adding instance ID $ec2_instance_id with IP $ec2_instance_ip, retry $((retry++)), return code $status."
+            sleep $wait_time
+        done
         if [[ $status != $add_ok && $status != $already_added ]]; then
             echo "$pkg: unable to add $ec2_instance_ip to the cluster: return code $status."
             exit 9
+        else
+            echo "$pkg: added $ec2_instance_ip to existing cluster, return code $status"
         fi
     # If we are a proxy we just want the list for the actual cluster
     else

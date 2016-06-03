@@ -1,4 +1,4 @@
-FROM gliderlabs/alpine:3.1
+FROM gliderlabs/alpine:3.3
 
 RUN apk --update add \
       python \
@@ -7,8 +7,8 @@ RUN apk --update add \
       curl \
       wget \
       bash &&\
-    pip install --upgrade awscli &&\
-    mkdir /root/.aws
+      pip install --upgrade awscli &&\
+      mkdir /root/.aws
 
 COPY etcd-aws-cluster /etcd-aws-cluster
 

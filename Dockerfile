@@ -1,8 +1,6 @@
-FROM gliderlabs/alpine:3.4
+FROM python:2.7-alpine
 
 RUN apk --update add \
-      python \
-      py-pip \
       jq \
       curl \
       wget \

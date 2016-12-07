@@ -138,7 +138,6 @@ class EtcdCluster:
             try:
                 response = requests.get('{}/v2/members'.format(client_url), timeout=3).json()
                 found_members = response['members']
-                self.existing_cluster = True
                 LOG.debug('found a cluster of %s at %s: %s', len(found_members), client_url, found_members)
                 for member in found_members:
                     node = EtcdNode(**member)
@@ -146,6 +145,7 @@ class EtcdCluster:
                     if client_url in node.clientURLs:
                         LOG.debug('node %s matches %s', node, client_url)
                         self.live_node = node  # the one that answered us
+                        self.existing_cluster = True
                     else:
                         LOG.debug('node %s does not match %s', node, client_url)
                 return
@@ -170,6 +170,9 @@ class EtcdCluster:
             """
             if tries > MAX_RETRIES:
                 raise Exception('Too many retries trying to delete node {} from the cluster'.format(node_id))
+            if not self.live_node:
+                LOG.info('No live cluster member available to eject the dead members')
+                return
             delete_url = '{}/v2/members/{}'.format(self.live_node.client_url, node_id)
             LOG.debug('ejecting %s from the Etcd cluster: %s', node_id, delete_url)
             response = requests.delete(delete_url)

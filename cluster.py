@@ -86,12 +86,16 @@ class EtcdNode(collections.namedtuple('EtcdNode', 'id, name, peerURLs, clientURL
         return '{}://{}:{}'.format(PEER_SCHEME, ip, PEER_PORT)
     def client_url_from_ip(ip):
         return '{}://{}:{}'.format(CLIENT_SCHEME, ip, CLIENT_PORT)
+    @property
     def peer_ip(self):
-        re.search('://(.*):', self.peer_url()).group(1)
+        return re.search('://(.*):', self.peer_url).group(1)
+    @property
     def peer_url(self):
         return self.peerURLs[0]
+    @property
     def client_ip(self):
-        re.search('://(.*):', self.client_url()).group(1)
+        return re.search('://(.*):', self.client_url).group(1)
+    @property
     def client_url(self):
         return self.clientURLs[0]
     def __repr__(self):
@@ -270,7 +274,7 @@ class EtcdCluster:
                             'Name': '_etcd-server._tcp.{}.'.format(DOMAIN_NAME),
                             'Type': 'SRV',
                             'TTL': 30,
-                            'ResourceRecords': [ {'Value': '0 0 {} {}'.format(PEER_PORT, node.peer_ip())} for node in self.cluster_members ]
+                            'ResourceRecords': [ {'Value': '0 0 {} {}'.format(PEER_PORT, node.peer_ip)} for node in self.cluster_members ]
                         }
                     },
                     {
@@ -279,7 +283,7 @@ class EtcdCluster:
                             'Name': '_etcd-client._tcp.{}.'.format(DOMAIN_NAME),
                             'Type': 'SRV',
                             'TTL': 30,
-                            'ResourceRecords': [ {'Value': '0 0 {} {}'.format(CLIENT_PORT, node.client_ip())} for node in self.cluster_members ]
+                            'ResourceRecords': [ {'Value': '0 0 {} {}'.format(CLIENT_PORT, node.client_ip)} for node in self.cluster_members ]
                         }
                     }
                 ]
@@ -322,4 +326,5 @@ def main():
 
     LOG.info('Done')
 
-main()
+if __name__ == '__main__':
+    main()

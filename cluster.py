@@ -285,6 +285,7 @@ class EtcdCluster:
                 ]
             }
         }
+        LOG.debug("requesting route53 change: %s", request)
         route53.change_resource_record_sets(**request)
 
 def main():

@@ -81,11 +81,11 @@ class EtcdNode(collections.namedtuple('EtcdNode', 'id, name, peerURLs, clientURL
     def client_url_from_ip(ip):
         return '{}://{}:{}'.format(CLIENT_SCHEME, ip, CLIENT_PORT)
     def peer_ip(self):
-        re.search('://(.*):', peer_url()).group(1)
+        re.search('://(.*):', self.peer_url()).group(1)
     def peer_url(self):
         return self.peerURLs[0]
     def client_ip(self):
-        re.search('://(.*):', client_url()).group(1)
+        re.search('://(.*):', self.client_url()).group(1)
     def client_url(self):
         return self.clientURLs[0]
     def __repr__(self):

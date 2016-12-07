@@ -265,7 +265,7 @@ def main():
         logging.getLogger(name).setLevel(logging.WARNING)
     ch = logging.StreamHandler()
     ch.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(func):%(lineno) - %(message)s')
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(funcName)s:%(lineno)s - %(message)s')
     ch.setFormatter(formatter)
     LOG.addHandler(ch)
 

@@ -201,7 +201,8 @@ class EtcdCluster:
 
         join_node()
 
-        self.cluster_members = self.peers
+        self.cluster_members = set(self.peers)
+        self.cluster_members.add(self.me)
         self.cluster_state = 'existing'
 
     def create(self):
@@ -209,7 +210,8 @@ class EtcdCluster:
         Create a new cluster, based on an autoscale group
         """
         LOG.debug('create a new cluster from %s', self.candidates)
-        self.cluster_members = self.candidates
+        self.cluster_members = set(self.candidates)
+        self.cluster_members.add(self.me)
         self.cluster_state = 'new'
 
     def write_cluster_variables(self, fileobject):

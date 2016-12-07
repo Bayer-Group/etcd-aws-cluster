@@ -201,8 +201,7 @@ class EtcdCluster:
 
         join_node()
 
-        self.cluster_members = set(self.peers)
-        self.cluster_members.add(self.me)
+        self.cluster_members = _deduplicate(self.peers, self.me)
         self.cluster_state = 'existing'
 
     def create(self):
@@ -210,9 +209,19 @@ class EtcdCluster:
         Create a new cluster, based on an autoscale group
         """
         LOG.debug('create a new cluster from %s', self.candidates)
-        self.cluster_members = set(self.candidates)
-        self.cluster_members.add(self.me)
+        self.cluster_members = _deduplicate(self.candidates, self.me)
         self.cluster_state = 'new'
+
+    def _deduplicate(lst, item):
+        """
+        given a list and one more element, return a (copied) combined list, without duplicates, sorted
+        """
+        result = [item]
+        for e in lst:
+            if e not in result:
+                result.append(e)
+        result.sort()
+        return result
 
     def write_cluster_variables(self, fileobject):
         self.initial_cluster_string = self._build_initial_cluster_string(self.cluster_members)

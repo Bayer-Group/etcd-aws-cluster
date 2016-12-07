@@ -8,6 +8,7 @@ import re
 import textwrap
 import time
 import os
+from functools import total_ordering
 
 LOG = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ class LocalGroup:
         LOG.debug('transform %s peers into Etcd nodes', len(self.asg_peers))
         return [ EtcdNode(id=None, name=peer.instance_id, peerURLs=[EtcdNode.peer_url_from_ip(peer.private_ip_address)], clientURLs=[EtcdNode.client_url_from_ip(peer.private_ip_address)]) for peer in self.asg_peers ]
 
+@total_ordering
 class EtcdNode(collections.namedtuple('EtcdNode', 'id, name, peerURLs, clientURLs')):
     ejected = False
     def peer_url_from_ip(ip):
@@ -94,6 +96,18 @@ class EtcdNode(collections.namedtuple('EtcdNode', 'id, name, peerURLs, clientURL
         return self.clientURLs[0]
     def __repr__(self):
         return 'EtcdNode(id={}, name={}, peerURLs={}, clientURLs={})'.format(repr(self.id), repr(self.name), self.peerURLs, self.clientURLs)
+    def _is_valid_operand(self, other):
+        return hasattr(other, 'name')
+    def __eq__(self, other):
+        if not self._is_valid_operand(other):
+            return NotImplemented
+        else:
+            return self.name == other.name
+    def __lt__(self, other):
+        if not self._is_valid_operand(other):
+            return NotImplemented
+        else:
+            return self.name < other.name
 
 class EtcdCluster:
     def __init__(self, peer_candidates, my_id, my_ip):

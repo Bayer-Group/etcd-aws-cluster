@@ -61,9 +61,13 @@ class LocalGroup:
         self.asg_peers = []
         for inst in response['AutoScalingGroups'][0]['Instances']:
             peer_id = inst['InstanceId']
-            LOG.debug('ASG peer %s has state %s', peer_id, inst['LifecycleState'])
+            LOG.debug('ASG member %s has state %s', peer_id, inst['LifecycleState'])
             if inst['LifecycleState'] == 'InService' and peer_id != instance_id:
-                self.asg_peers.append(ec2.Instance(peer_id))
+                ec2inst = ec2.Instance(peer_id)
+                if ec2inst.state['Name'] == 'running':
+                    self.asg_peers.append(ec2.Instance(peer_id))
+                else:
+                    LOG.info("ASG reports that %s is InService but the instance is %s", peer_id, ec2inst.state['Name'])
         LOG.info('Found %s ASG peers', len(self.asg_peers))
 
     def peer_ips(self):
@@ -279,7 +283,7 @@ def main():
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(funcName)s:%(lineno)s - %(message)s')
     ch.setFormatter(formatter)
     LOG.addHandler(ch)
-
+    LOG.propagate = False
 
     LOG.info('starting etcd cluster search')
 

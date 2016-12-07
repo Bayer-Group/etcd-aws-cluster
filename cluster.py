@@ -133,7 +133,7 @@ class EtcdCluster:
         cluster. Update the object with the results of the hunt.
         """
         for peer in self.candidates:
-            client_url = peer.client_url()
+            client_url = peer.client_url
             LOG.debug('hunting for a Etcd cluster: %s', client_url)
             try:
                 response = requests.get('{}/v2/members'.format(client_url), timeout=3).json()
@@ -170,7 +170,7 @@ class EtcdCluster:
             """
             if tries > MAX_RETRIES:
                 raise Exception('Too many retries trying to delete node {} from the cluster'.format(node_id))
-            delete_url = '{}/v2/members/{}'.format(self.live_node.client_url(), node_id)
+            delete_url = '{}/v2/members/{}'.format(self.live_node.client_url, node_id)
             LOG.debug('ejecting %s from the Etcd cluster: %s', node_id, delete_url)
             response = requests.delete(delete_url)
             if response.status_code == 204 or response.status_code == 410:
@@ -199,7 +199,7 @@ class EtcdCluster:
         Build an `initial_cluster` string based on an existing cluster
         """
         LOG.debug('building a cluster string of %s nodes', len(nodes))
-        return ','.join([ '{}={}'.format(node.name, node.peer_url()) for node in nodes ])
+        return ','.join([ '{}={}'.format(node.name, node.peer_url) for node in nodes ])
 
     def join(self):
         """
@@ -208,7 +208,7 @@ class EtcdCluster:
         def join_node(tries=0):
             if tries > MAX_RETRIES:
                 raise Exception('Too many retries trying to join the cluster at %s', self.live_node)
-            members_url = '{}/v2/members'.format(self.live_node.client_url())
+            members_url = '{}/v2/members'.format(self.live_node.client_url)
             new_member = {  # only these pieces are required to bootstrap
                 'name': self.me.name,
                 'peerURLs': self.me.peerURLs,

@@ -201,7 +201,7 @@ class EtcdCluster:
 
         join_node()
 
-        self.cluster_members = _deduplicate(self.peers, self.me)
+        self.cluster_members = EtcdCluster._deduplicate(self.peers, self.me)
         self.cluster_state = 'existing'
 
     def create(self):
@@ -209,7 +209,7 @@ class EtcdCluster:
         Create a new cluster, based on an autoscale group
         """
         LOG.debug('create a new cluster from %s', self.candidates)
-        self.cluster_members = _deduplicate(self.candidates, self.me)
+        self.cluster_members = EtcdCluster._deduplicate(self.candidates, self.me)
         self.cluster_state = 'new'
 
     def _deduplicate(lst, item):

@@ -1,16 +1,9 @@
-FROM gliderlabs/alpine:3.4
+FROM python:3.5-alpine
 
-RUN apk --update add \
-      python \
-      py-pip \
-      jq \
-      curl \
-      wget \
-      bash &&\
-      pip install --upgrade awscli &&\
-      mkdir /root/.aws
+RUN pip install --upgrade boto3 requests &&\
+    mkdir /root/.aws
 
-COPY etcd-aws-cluster /etcd-aws-cluster
+COPY cluster.py /cluster.py
 
 # Expose volume for adding credentials
 VOLUME ["/root/.aws"]
@@ -18,4 +11,4 @@ VOLUME ["/root/.aws"]
 # Expose directory to write output to, and to potentially read certs from
 VOLUME ["/etc/sysconfig/", "/etc/certs"]
 
-ENTRYPOINT /etcd-aws-cluster
+CMD python /cluster.py

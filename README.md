@@ -54,7 +54,10 @@ Environment Variables
 * ETCD_PEER_SCHEME - defaults to http
 
 
-Demo
+Demos
 ----
 
 We have created a CloudFomation script that shows sample usage of this container for creating a simple etcd cluster: https://gist.github.com/tj-corrigan/3baf86051471062b2fb7
+
+From the community, arehmandev has built a complex "Terraform-etcd" applying our principles in the cloud-init scripts:
+https://github.com/arehmandev/Terraform-etcd

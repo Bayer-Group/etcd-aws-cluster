@@ -64,7 +64,7 @@ echo "client_client_scheme=$etcd_client_scheme"
 etcd_peer_scheme=${ETCD_PEER_SCHEME:-http}
 echo "peer_peer_scheme=$etcd_peer_scheme"
 
-etcd_peer_urls=$(aws ec2 describe-instances --instance-ids $(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-name "$asg_name" | jq '.AutoScalingGroups[0].Instances[] | select(.LifecycleState  == "InService") | .InstanceId' | xargs) | jq -r ".Reservations[].Instances | map(\"$etcd_client_scheme://\" + .NetworkInterfaces[].PrivateIpAddress + \":2379\")[]")
+etcd_peer_urls=$(aws ec2 describe-instances --instance-ids $(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-name "$asg_name" | jq '.AutoScalingGroups[0].Instances[] | select(.LifecycleState  == "InService") | .InstanceId' | xargs) | jq -r ".Reservations[].Instances | map(\"$etcd_client_scheme://\" + .NetworkInterfaces[].PrivateIpAddress + \":$client_port\")[]")
 if [[ ! $etcd_peer_urls ]]; then
     echo "$pkg: unable to find members of auto scaling group"
     exit 5
@@ -144,7 +144,7 @@ if [[ $etcd_existing_peer_urls && $etcd_existing_peer_names != *"$ec2_instance_i
         status=0
         retry=1
         until [[ $status = $add_ok || $status = $already_added || $retry = $retry_times ]]; do
-            status=$(curl $ETCD_CURLOPTS -f -s -w %{http_code} -o /dev/null -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:2380\"], \"name\": \"$ec2_instance_id\"}")
+            status=$(curl $ETCD_CURLOPTS -f -s -w %{http_code} -o /dev/null -XPOST "$etcd_good_member_url/v2/members" -H "Content-Type: application/json" -d "{\"peerURLs\": [\"http://$ec2_instance_ip:$server_port\"], \"name\": \"$ec2_instance_id\"}")
             echo "$pkg: adding instance ID $ec2_instance_id with IP $ec2_instance_ip, retry $((retry++)), return code $status."
             sleep $wait_time
         done
@@ -176,7 +176,7 @@ else
     # create a new cluster
     echo "creating new cluster"
 
-    etcd_initial_cluster=$(aws ec2 describe-instances --instance-ids $(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-name "$asg_name" | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r ".Reservations[].Instances | map(.InstanceId + \"=$etcd_peer_scheme://\" + .NetworkInterfaces[].PrivateIpAddress + \":2380\")[]" | xargs | sed 's/  */,/g')
+    etcd_initial_cluster=$(aws ec2 describe-instances --instance-ids $(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-name "$asg_name" | jq .AutoScalingGroups[0].Instances[].InstanceId | xargs) | jq -r ".Reservations[].Instances | map(.InstanceId + \"=$etcd_peer_scheme://\" + .NetworkInterfaces[].PrivateIpAddress + \":$server_port\")[]" | xargs | sed 's/  */,/g')
     echo "etcd_initial_cluster=$etcd_initial_cluster"
     if [[ ! $etcd_initial_cluster ]]; then
         echo "$pkg: unable to get peers from auto scaling group"
